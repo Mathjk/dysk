@@ -41,7 +41,7 @@ pub fn run() -> io::Result<()> {
         return writeln!(&mut w, "dysk {}", env!("CARGO_PKG_VERSION"));
     }
     if args.help {
-        help::print(args.ascii);
+        help::write(&mut w, args.ascii)?;
         if args.color() {
             csi_reset();
         }

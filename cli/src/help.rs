@@ -1,6 +1,14 @@
 use {
     crate::args::*,
     clap::CommandFactory,
+    std::io::{
+        self,
+        Write,
+    },
+    termimad::{
+        FmtText,
+        minimad::TextTemplate,
+    },
 };
 
 static INTRO_TEMPLATE: &str = "
@@ -49,7 +57,19 @@ static EXAMPLES: &[Example] = &[
     ),
 ];
 
-pub fn print(ascii: bool) {
+/// Write the help on `w`.
+///
+/// `clap_help::Printer::print_help` writes to stdout with `println!` and
+/// panics when the pipe is closed. The content-width layout is reproduced
+/// here through termimad's writer API so that a broken pipe produces a
+/// normal `io::Error` handled by the caller instead of a panic.
+///
+/// # Errors
+/// Returns an `io::Error` if writing to `w` fails
+pub fn write<W: Write>(
+    w: &mut W,
+    ascii: bool,
+) -> io::Result<()> {
     let mut printer = clap_help::Printer::new(Args::command())
         .with("introduction", INTRO_TEMPLATE)
         .without("author");
@@ -67,7 +87,37 @@ pub fn print(ascii: bool) {
             .set("example-cmd", example.cmd)
             .set_md("example-comments", example.comments);
     }
-    printer.print_help();
+    // Mirrors `Printer::print_help_content_width` (clap-help 1.6): its
+    // templates map isn't exposed, so the templates configured above are
+    // listed again here in rendering order
+    let skin = printer.skin_mut().clone();
+    let mut width = termimad::terminal_size().0 as usize;
+    if let Some(max_width) = printer.max_width {
+        width = width.min(max_width);
+    }
+    let expander = printer.expander_mut();
+    let mut texts = [
+        clap_help::TEMPLATE_TITLE,
+        INTRO_TEMPLATE,
+        clap_help::TEMPLATE_USAGE,
+        clap_help::TEMPLATE_POSITIONALS,
+        clap_help::TEMPLATE_OPTIONS,
+        EXAMPLES_TEMPLATE,
+    ]
+    .iter()
+    .map(|template| {
+        let template = TextTemplate::from(*template);
+        FmtText::from_text(&skin, expander.expand(&template), Some(width))
+    })
+    .collect::<Vec<_>>();
+    let content_width = texts
+        .iter()
+        .fold(0, |cw, text| cw.max(text.content_width()));
+    for text in &mut texts {
+        text.set_rendering_width(content_width);
+        writeln!(w, "{text}")?;
+    }
+    Ok(())
 }
 
 struct Example {
